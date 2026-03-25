@@ -8,13 +8,15 @@ import json
 import os
 
 # ── Paths ─────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATASET_PATH      = os.path.join(BASE_DIR, "tweedie_glm_v4/dataset_2025.csv")
-XGB_PREDS_PATH    = os.path.join(BASE_DIR, "xgboost_v5_noleak/rate_and_cluster/ranked_predictions.csv")
-TWEEDIE_PREDS_PATH= os.path.join(BASE_DIR, "tweedie_glm_v5_experiments/2_Base_Unpruned_Velocity/ranked_predictions.csv")
-SHAPEFILE_PATH    = os.path.join(BASE_DIR, "inputdata/shape_tracking/2023_tract_shapefiles/tl_2023_53_tract.shp")
-SHAP_CSV_PATH     = os.path.join(BASE_DIR, "xgboost_v5_noleak/rate_and_cluster/shap_importance.csv")
-SHAP_TRACT_PATH   = os.path.join(BASE_DIR, "xgboost_v5_noleak/rate_and_cluster/per_tract_shap_top.csv")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+DATASET_PATH      = os.path.join(DATA_DIR, "dataset_2025.csv")
+XGB_PREDS_PATH    = os.path.join(DATA_DIR, "xgb_ranked_predictions.csv")
+TWEEDIE_PREDS_PATH= os.path.join(DATA_DIR, "tweedie_ranked_predictions.csv")
+SHAPEFILE_PATH    = os.path.join(DATA_DIR, "shapefiles/tl_2023_53_tract.shp")
+SHAP_CSV_PATH     = os.path.join(DATA_DIR, "shap_importance.csv")
+SHAP_TRACT_PATH   = os.path.join(DATA_DIR, "per_tract_shap_top.csv")
 
 # ── Colors & Mapping ─────────────────────────────────────────────────────────
 PALETTE = {

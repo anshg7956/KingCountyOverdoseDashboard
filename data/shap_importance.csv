@@ -1,0 +1,15 @@
+Feature,Mean_Abs_SHAP
+Rate_Independent,16.814198
+Med_HHD_Inc_Thousands_ACS___Neighbor_Avg,1.0860606
+Med_HHD_Inc_Thousands_ACS__,0.6738754
+pct_College_ACS__,0.5688304
+Cluster_2,0.5272248
+pct_NH_Blk_alone_ACS__,0.45092982
+pct_Not_HS_Grad_ACS__,0.28566396
+pct_Vacant_Units_ACS__,0.23383749
+pct_Vacant_Units_ACS___Neighbor_Avg,0.18857273
+pct_Renter_Occp_HU_ACS___Neighbor_Avg,0.15904208
+Pct_No_Health_Ins_CALCULATED_ACS__,0.05168238
+pct_Renter_Occp_HU_ACS__,0.049129024
+Cluster_1,0.0
+Cluster_3,0.0
