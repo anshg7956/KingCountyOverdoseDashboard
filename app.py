@@ -17,6 +17,9 @@ TWEEDIE_PREDS_PATH= os.path.join(DATA_DIR, "tweedie_ranked_predictions.csv")
 SHAPEFILE_PATH    = os.path.join(DATA_DIR, "shapefiles/tl_2023_53_tract.shp")
 SHAP_CSV_PATH     = os.path.join(DATA_DIR, "shap_importance.csv")
 SHAP_TRACT_PATH   = os.path.join(DATA_DIR, "per_tract_shap_top.csv")
+TW_SHAP_IMPORTANCE = os.path.join(DATA_DIR, "xgb_baseline_shap_importance.csv")
+TW_CONTRIB_PATH   = os.path.join(DATA_DIR, "xgb_baseline_shap_values.csv")
+TW_FEATVAL_PATH   = os.path.join(DATA_DIR, "xgb_baseline_feature_values.csv")
 
 # ── Colors & Mapping ─────────────────────────────────────────────────────────
 PALETTE = {
@@ -398,55 +401,159 @@ with tabs[2]:
             st.plotly_chart(fig_bpr, use_container_width=True)
 
     else:
-        st.markdown("#### Long-Term Interventions & Feature Impact (Rate Ratios)")
-        st.write("This interactive forest plot displays the **exponential multiplier effect** of specific demographic shifts. A Rate Ratio of 1.5 indicates that a 1-unit increase geometrically scales expected overdose rates by 1.5x (50% increase). Ratios < 1 indicate protective factors.")
-        
+        st.markdown("#### Long-Term Policy Drivers — Tweedie GLM Interpretability")
+
+        st.markdown('<p class="section-header">Feature Contributions (Interactive SHAP Beeswarm)</p>', unsafe_allow_html=True)
+
+        # Load XGBoost baseline SHAP data (TreeExplainer - census only)
+        tw_contrib = pd.read_csv(TW_CONTRIB_PATH)
+        tw_featvals = pd.read_csv(TW_FEATVAL_PATH)
+        tw_importance = pd.read_csv(TW_SHAP_IMPORTANCE).sort_values("Mean_Abs_SHAP", ascending=False)
+
+        # Rename features for display
+        rename_map = {
+            "Velocity_1Yr": "1-Yr Overdose Velocity",
+            "Med_HHD_Inc_Thousands_ACS___Neighbor_Avg": "Neighbor Median Income ($k)",
+            "pct_Renter_Occp_HU_ACS___Neighbor_Avg": "Neighbor Renter %",
+            "Cluster_2": "Cluster 3 (Mod Risk)",
+            "Med_HHD_Inc_Thousands_ACS__": "Median Income ($k)",
+            "Cluster_3": "Cluster 4 (Mod Low Risk)",
+            "pct_Not_HS_Grad_ACS__": "No HS Diploma %",
+            "pct_Vacant_Units_ACS__": "Vacant Units %",
+            "pct_College_ACS__": "College %",
+            "pct_Renter_Occp_HU_ACS__": "Renter Occupied %",
+            "pct_NH_Blk_alone_ACS__": "NH Black %",
+            "Pct_No_Health_Ins_CALCULATED_ACS__": "No Health Insured %",
+            "Cluster_1": "Cluster 2 (Highest Risk)",
+            "pct_Vacant_Units_ACS___Neighbor_Avg": "Neighbor Vacant %",
+        }
+
+        # Take top 10 features by importance
+        top_features = tw_importance["Feature"].head(10).tolist()
+
+        # Build beeswarm data
+        beeswarm_rows = []
+        for feat in top_features:
+            if feat not in tw_contrib.columns or feat not in tw_featvals.columns:
+                continue
+            contribs = tw_contrib[feat].values
+            raw_vals = tw_featvals[feat].values
+            # Normalize raw values to 0-1 for color
+            vmin, vmax = np.nanmin(raw_vals), np.nanmax(raw_vals)
+            if vmax - vmin > 0:
+                normed = (raw_vals - vmin) / (vmax - vmin)
+            else:
+                normed = np.zeros_like(raw_vals)
+            display_name = rename_map.get(feat, feat)
+            for i in range(len(contribs)):
+                beeswarm_rows.append({
+                    "Feature": display_name,
+                    "SHAP Value": contribs[i],
+                    "Feature Value (normalized)": normed[i],
+                    "Raw Value": raw_vals[i],
+                    "jitter": np.random.uniform(-0.3, 0.3)
+                })
+
+        bee_df = pd.DataFrame(beeswarm_rows)
+
+        feature_order = [rename_map.get(f, f) for f in top_features if f in tw_contrib.columns]
+        feature_order = feature_order[::-1]  # reverse: least important at bottom (idx 0), most important at top
+
+        # Map feature names to numeric y positions + jitter for beeswarm
+        feat_to_idx = {f: i for i, f in enumerate(feature_order)}
+        bee_df["y_pos"] = bee_df["Feature"].map(feat_to_idx) + bee_df["jitter"]
+
+        fig_bee = px.scatter(
+            bee_df, x="SHAP Value", y="y_pos",
+            color="Feature Value (normalized)",
+            color_continuous_scale=[[0, "#0052FF"], [0.5, "#C4B5FD"], [1, "#FF0044"]],
+            hover_data={"Raw Value": ":.2f", "SHAP Value": ":.4f", "Feature Value (normalized)": False, "y_pos": False, "Feature": True}
+        )
+        fig_bee.update_traces(marker=dict(size=4, opacity=0.65))
+        fig_bee.update_layout(
+            height=520, paper_bgcolor=PALETTE["bg"], plot_bgcolor=PALETTE["box"],
+            margin=dict(l=10, r=10, t=10, b=30),
+            xaxis_title="← Decreases Risk          SHAP Value          Increases Risk →",
+            yaxis_title="",
+            coloraxis_colorbar=dict(title="Feature\nValue", len=0.5, thickness=12),
+            xaxis=dict(showgrid=True, gridcolor=PALETTE["border"], griddash="dot", zeroline=True, zerolinecolor=PALETTE["subtext"], zerolinewidth=1.5),
+            yaxis=dict(tickvals=list(range(len(feature_order))), ticktext=feature_order, showgrid=True, gridcolor=PALETTE["border"])
+        )
+        st.plotly_chart(fig_bee, use_container_width=True)
+
+        # Collapsible SHAP explainer
+        with st.expander("📖 How to Read This Plot"):
+            st.markdown("""
+**What is this?** This is a SHAP beeswarm plot generated from the XGBoost baseline model (census features only, no prior rate or cluster). Each dot represents one census tract. The horizontal position shows how much that feature pushed the predicted overdose rate **up** (right) or **down** (left) relative to the average prediction.
+
+**Color Encoding:** Dot color represents the feature's raw value for that tract — **blue** = low value, **red** = high value.
+
+**What to look for:**
+- **"Neighbor Median Income"**: Blue dots (low neighbor income) push right → tracts surrounded by economically disadvantaged areas face higher structural risk. This is the strongest *census-only* driver.
+- **"Neighbor Vacant %"** and **"Neighbor Renter %"**: Spatial spillover variables consistently rank among the top drivers, proving that neighborhood context matters more than isolated tract-level factors.
+- **"No HS Diploma %"**: Red dots push right → areas with lower educational attainment face elevated long-term risk.
+
+**Why baseline (no prior rate)?** By stripping out the prior overdose rate and cluster assignments, this plot reveals which **structural, modifiable socioeconomic factors** independently drive risk — exactly the levers that long-term policy can target.
+            """)
+
+        # Policy Insights (standalone)
+        st.markdown('<div class="kpi-card" style="text-align:left;">', unsafe_allow_html=True)
+        st.markdown('**💡 Policy Insights from SHAP Analysis**')
+        st.markdown("- **Neighborhood economics dominate:** The top 3 drivers are all *spatial spillover* variables (neighbor income, neighbor vacancy, neighbor renter %). This means a tract's risk is shaped more by its surrounding community than by its own demographics alone — interventions should target regional corridors, not isolated zip codes.")
+        st.markdown("- **Education as a long-term lever:** No HS Diploma % and College % both appear as significant drivers. Unlike income (which is harder to shift via policy), educational attainment programs represent a directly modifiable, multi-generational protective factor.")
+        st.markdown("- **Housing instability signals early risk:** Renter-occupied housing and vacancy rates amplify risk through both local and spatial channels, suggesting that housing stabilization programs (eviction prevention, affordable housing) could serve as upstream overdose prevention.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # Rate Ratios below
+        st.markdown('<p class="section-header" style="margin-top:25px;">Rate Ratios — Tweedie GLM (95% CI)</p>', unsafe_allow_html=True)
+
         rr_data = [
             {"var": "Cluster 2 (Highest Risk)", "Rate_Ratio": 17.889, "CI_Lower": 13.931, "CI_Upper": 22.970},
             {"var": "Cluster 3 (Mod Risk)", "Rate_Ratio": 4.984, "CI_Lower": 4.330, "CI_Upper": 5.736},
             {"var": "Cluster 4 (Mod Low Risk)", "Rate_Ratio": 1.543, "CI_Lower": 1.398, "CI_Upper": 1.702},
             {"var": "1-Yr Overdose Velocity", "Rate_Ratio": 1.008, "CI_Lower": 1.006, "CI_Upper": 1.009},
             {"var": "College %", "Rate_Ratio": 1.004, "CI_Lower": 1.000, "CI_Upper": 1.008},
-            {"var": "Vacant Units % (Neighbor)", "Rate_Ratio": 1.001, "CI_Lower": 0.985, "CI_Upper": 1.017},
+            {"var": "Vacant % (Neighbor)", "Rate_Ratio": 1.001, "CI_Lower": 0.985, "CI_Upper": 1.017},
             {"var": "NH Black %", "Rate_Ratio": 1.000, "CI_Lower": 0.995, "CI_Upper": 1.006},
             {"var": "No HS %", "Rate_Ratio": 0.999, "CI_Lower": 0.990, "CI_Upper": 1.008},
-            {"var": "Renter Occupied %", "Rate_Ratio": 0.998, "CI_Lower": 0.996, "CI_Upper": 1.001},
-            {"var": "No Health Insured %", "Rate_Ratio": 0.997, "CI_Lower": 0.984, "CI_Upper": 1.009},
+            {"var": "Renter %", "Rate_Ratio": 0.998, "CI_Lower": 0.996, "CI_Upper": 1.001},
+            {"var": "No Insurance %", "Rate_Ratio": 0.997, "CI_Lower": 0.984, "CI_Upper": 1.009},
             {"var": "Median Income ($k)", "Rate_Ratio": 0.996, "CI_Lower": 0.995, "CI_Upper": 0.998},
-            {"var": "Renter Occupied % (Neighbor)", "Rate_Ratio": 0.993, "CI_Lower": 0.989, "CI_Upper": 0.996},
-            {"var": "Vacant Units %", "Rate_Ratio": 0.993, "CI_Lower": 0.984, "CI_Upper": 1.002},
-            {"var": "Median Income ($k) (Neighbor)", "Rate_Ratio": 0.991, "CI_Lower": 0.989, "CI_Upper": 0.993},
+            {"var": "Renter % (Neighbor)", "Rate_Ratio": 0.993, "CI_Lower": 0.989, "CI_Upper": 0.996},
+            {"var": "Vacant %", "Rate_Ratio": 0.993, "CI_Lower": 0.984, "CI_Upper": 1.002},
+            {"var": "Income ($k) (Neighbor)", "Rate_Ratio": 0.991, "CI_Lower": 0.989, "CI_Upper": 0.993},
         ]
         rr_df = pd.DataFrame(rr_data).sort_values("Rate_Ratio", ascending=True)
 
-        fig_rr = go.Figure()
-        
-        # Determine color (red if > 1, green if < 1)
         colors = [PALETTE["p3"] if r > 1.0 else PALETTE["p1"] for r in rr_df["Rate_Ratio"]]
-        
+
+        fig_rr = go.Figure()
         fig_rr.add_trace(go.Scatter(
             x=rr_df["Rate_Ratio"], y=rr_df["var"], mode="markers",
             error_x=dict(type="data", symmetric=False, array=rr_df["CI_Upper"]-rr_df["Rate_Ratio"], arrayminus=rr_df["Rate_Ratio"]-rr_df["CI_Lower"], color=PALETTE["text"], thickness=1.5),
-            marker=dict(color=colors, size=10),
-            hovertemplate="Feature: %{y}<br>Rate Ratio: %{x:.3f}<extra></extra>"
+            marker=dict(color=colors, size=8),
+            hovertemplate="%{y}<br>Rate Ratio: %{x:.3f}<extra></extra>"
         ))
-        
-        # Reference Line at 1.0 (No Effect)
         fig_rr.add_vline(x=1, line_dash="dash", line_color=PALETTE["subtext"])
-        
         fig_rr.update_layout(
             xaxis_title="Rate Ratio (Log Scale)",
             yaxis_title="",
-            paper_bgcolor=PALETTE["bg"], plot_bgcolor=PALETTE["box"], 
-            height=500, margin=dict(l=10, r=20, t=30, b=10),
+            paper_bgcolor=PALETTE["bg"], plot_bgcolor=PALETTE["box"],
+            height=400, margin=dict(l=10, r=10, t=10, b=30),
             xaxis=dict(type="log", showgrid=True, gridcolor=PALETTE["border"], griddash="dot", tickformat=".2f"),
-            yaxis=dict(showgrid=True, gridcolor=PALETTE["border"])
+            yaxis=dict(showgrid=True, gridcolor=PALETTE["border"], tickfont=dict(size=10))
         )
         st.plotly_chart(fig_rr, use_container_width=True)
-        
-        # Policy Insight Block
-        st.markdown('<div class="kpi-card" style="text-align:left;">', unsafe_allow_html=True)
-        st.markdown('**Policy Insight:**')
-        st.markdown("- **Systemic Inequity Overpowers Geography:** Variables like neighboring tract median income (`0.991`) display statistically stronger, protective spatial spillovers than local factors alone, suggesting resource allocation should be regional rather than isolated to single zip codes.")
-        st.markdown("- **Velocity Momentum:** `1-Yr Overdose Velocity` guarantees a $1.008$ multiplier, mathematically proving that delaying intervention compounds overdose growth geometrically year-over-year. Prevention programs deployed early act as an exponential dampener.")
-        st.markdown("</div>", unsafe_allow_html=True)
+
+        with st.expander("📖 How to Read This Plot"):
+            st.markdown("""
+**What is a Rate Ratio?** A rate ratio is the multiplicative change in expected overdose rate for a 1-unit increase in a predictor. It is derived by exponentiating the Tweedie GLM coefficients.
+
+- **Rate Ratio = 1.0** (dashed line): No effect — changing this variable does not change predicted risk.
+- **Rate Ratio > 1.0** (red dots): Risk factor — a 1-unit increase in this variable multiplies the expected rate. E.g., Cluster 2 membership multiplies risk by ~17.9x.
+- **Rate Ratio < 1.0** (blue dots): Protective factor — a 1-unit increase reduces expected risk. E.g., each $1k increase in neighbor median income multiplies rate by 0.991 (0.9% reduction).
+
+**Error bars** show the 95% confidence interval. If the interval crosses 1.0, the effect is not statistically significant at p < 0.05.
+
+**Caveat:** Because the Tweedie GLM is a single-equation model, correlated predictors (multicollinearity) can suppress each other's coefficients. Variables like Neighbor Income and Renter % share variance, so their individual rate ratios may understate their true importance. The SHAP beeswarm above provides a more reliable picture of marginal impact.
+            """)
